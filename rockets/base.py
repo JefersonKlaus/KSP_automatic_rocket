@@ -51,7 +51,7 @@ class BaseRocket(metaclass=abc.ABCMeta):
         pitch (float) – Target pitch angle, in degrees between -90° and +90°.
         heading (float) – Target heading angle, in degrees between 0° and 360°.
         """
-        print('lift_off START')
+        self.__print_status('LIFT OFF: ON')
 
         try:
             self.auto_pilot.engage()
@@ -72,14 +72,14 @@ class BaseRocket(metaclass=abc.ABCMeta):
             with event.condition:
                 event.wait()
 
-            print('lift_off END')
+            self.__print_status('LIFT OFF: OFF')
             self.vessel.control.throttle = 0
 
         except Exception as error:
             self.__catastrophic_failure(method_name='lift_off', error=error)
 
         if freeze_commands:
-            print('freeze_commands START')
+            self.__print_status('COMMANDS BLOCKED UNTIL GOAL ALTITUDE: ON')
             self.set_prograde(rcs=False)
             mean_apoapsis_altitude = self.conn.get_call(getattr, self.vessel.flight(), 'mean_altitude')
             expr = self.conn.krpc.Expression.greater_than(
@@ -88,18 +88,21 @@ class BaseRocket(metaclass=abc.ABCMeta):
             event = self.conn.krpc.add_event(expr)
             with event.condition:
                 event.wait()
-            print('freeze_commands END')
+            self.__print_status('COMMANDS BLOCKED UNTIL GOAL ALTITUDE: OFF')
 
         self.auto_pilot.disengage()
 
     def landing_with_mech_jeb(self, altitude_airbrake=None, touchdown_speed=3, latitude=-0.097, longitude=-74.5565):
-        print('Landing Vessel...')
-
+        """
+        Starts all threads needed to landing the rocket using mechJeb
+        This method just work in active rocket
+        """
         threads = []
 
-        t = Thread(target=self.__toggle_airbrake, args=(altitude_airbrake,))
-        t.start()
-        threads.append(t)
+        # TODO: create a method to start airbrake when the rocket has
+        # t = Thread(target=self.__toggle_airbrake, args=(altitude_airbrake,))
+        # t.start()
+        # threads.append(t)
 
         t = Thread(target=self.__mech_jeb_landing, args=(touchdown_speed, latitude, longitude))
         t.start()
@@ -108,14 +111,19 @@ class BaseRocket(metaclass=abc.ABCMeta):
         for t in threads:
             t.join()
 
+        self.__print_status('ALL SYSTEM OF LANDING: OFF')
+
     def landing_by_script(self, altitude_airbrake=None):
-        print('Landing Vessel...')
+        """
+        Starts all threads needed to landing the rocket using just script
+        This method just work with any rocket
+        """
 
         threads = []
 
-        t = Thread(target=self.__toggle_airbrake, args=(altitude_airbrake,))
-        t.start()
-        threads.append(t)
+        # t = Thread(target=self.__toggle_airbrake, args=(altitude_airbrake,))
+        # t.start()
+        # threads.append(t)
 
         t = Thread(target=self.__open_legs, args=())
         t.start()
@@ -128,13 +136,7 @@ class BaseRocket(metaclass=abc.ABCMeta):
         for t in threads:
             t.join()
 
-        print('Landing Vessel DONE')
-
-    def __angle_between(self, v1, v2):
-        """ Returns the angle in radians between vectors 'v1' and 'v2'"""
-        v1_u = self.__unit_vector(v1)
-        v2_u = self.__unit_vector(v2)
-        return arccos(clip(dot(v1_u, v2_u), -1.0, 1.0))
+        self.__print_status('ALL SYSTEM OF LANDING: OFF')
 
     def time_to_suicide_burn(self, alt=0):
         '''
@@ -172,7 +174,7 @@ class BaseRocket(metaclass=abc.ABCMeta):
                 .5 * self.vessel.flight(rf).speed * decel_time)
         print(ground_track)
         return burn_time - self.space_center.ut
-    
+
     def throttle_to_suicide_burn(self):
         v_speed = self.conn.add_stream(getattr, self.vessel.flight(self.reference_frame), 'vertical_speed')
 
@@ -186,9 +188,9 @@ class BaseRocket(metaclass=abc.ABCMeta):
 
         if self.altitude() < 300:
             throttle = throttle * .95  # 95% of throttle
-        
+
         return throttle
-    
+
     def draw_landing_site(self, landing_reference_frame):
         try:
             self.conn.drawing.add_line((0, 0, 0), (1, 0, 0), landing_reference_frame)
@@ -206,12 +208,55 @@ class BaseRocket(metaclass=abc.ABCMeta):
         raise NotImplementedError('Methodo "set_abort_control" não implementado')
 
     @abc.abstractmethod
+    def set_stages(self):
+        """
+        Use self.stage to control your rocket
+        """
+        raise NotImplementedError('Methodo "stages" não implementado')
+
     def next_stage(self):
-        # TODO: criar um metodo para configurar estagios e esse aqui, apenas chamara o novo
-        print('STAGE ' + str(self.stage))
+        self.set_stages()
         self.stage += 1
 
+    def __angle_between(self, v1, v2):
+        """ Returns the angle in radians between vectors 'v1' and 'v2'"""
+        v1_u = self.__unit_vector(v1)
+        v2_u = self.__unit_vector(v2)
+        return arccos(clip(dot(v1_u, v2_u), -1.0, 1.0))
+
+    def __mech_jeb_landing(self, touchdown_speed, latitude, longitude):
+        self.__print_status('LANDING WITH MECHJEB: ON')
+        try:
+            self.vessel.control.rcs = True
+
+            self.mech_jeb.target_controller.set_position_target(
+                body=self.vessel.orbit.body,
+                latitude=latitude,
+                longitude=longitude
+            )
+
+            landing_autopilot = self.mech_jeb.landing_autopilot
+            landing_autopilot.enabled = True
+
+            landing_autopilot.touchdown_speed = touchdown_speed
+            landing_autopilot.land_at_position_target()
+
+            # cut throttle and enable SAS when landed
+            while self.vessel.situation != self.space_center.VesselSituation.landed:
+                time.sleep(0.01)
+            self.control.throttle = 0.0
+
+            landing_autopilot.enabled = False
+            self.set_stability_assist()
+
+        except Exception as error:
+            self.__catastrophic_failure(method_name='__mech_jeb_landing', error=error)
+
+        self.__print_status('LANDING WITH MECHJEB: OFF')
+
     def __script_landing(self):
+        self.__print_status('LANDING WITH SCRIPT: ON')
+
         create_relative = self.conn.space_center.ReferenceFrame.create_relative
         # Coordinates of landing site
         landing_latitude = -(0 + (5.0 / 60) + (48.38 / 60 / 60))
@@ -248,13 +293,13 @@ class BaseRocket(metaclass=abc.ABCMeta):
         self.draw_landing_site(landing_reference_frame)
 
         self.__load_data_stream()
-        velocity = self.conn.add_stream(self.vessel.velocity, landing_reference_frame)
-        v_speed = self.conn.add_stream(getattr, self.vessel.flight(landing_reference_frame), 'vertical_speed')
-        h_speed = self.conn.add_stream(getattr, self.vessel.flight(landing_reference_frame), 'horizontal_speed')
-        position = self.conn.add_stream(self.vessel.position, landing_reference_frame)
-        rotation = self.conn.add_stream(self.vessel.rotation, landing_reference_frame)
-        direction = self.conn.add_stream(self.vessel.direction, landing_reference_frame)
-        angular_velocity = self.conn.add_stream(self.vessel.angular_velocity, landing_reference_frame)
+        # velocity = self.conn.add_stream(self.vessel.velocity, landing_reference_frame)
+        # v_speed = self.conn.add_stream(getattr, self.vessel.flight(landing_reference_frame), 'vertical_speed')
+        # h_speed = self.conn.add_stream(getattr, self.vessel.flight(landing_reference_frame), 'horizontal_speed')
+        # position = self.conn.add_stream(self.vessel.position, landing_reference_frame)
+        # rotation = self.conn.add_stream(self.vessel.rotation, landing_reference_frame)
+        # direction = self.conn.add_stream(self.vessel.direction, landing_reference_frame)
+        # angular_velocity = self.conn.add_stream(self.vessel.angular_velocity, landing_reference_frame)
 
         # Define autopilot reference frame
         self.auto_pilot.reference_frame = self.vessel.surface_reference_frame
@@ -285,12 +330,14 @@ class BaseRocket(metaclass=abc.ABCMeta):
 
             if throttle >= 1 or engine_on:  # begin when needs 100% throttle
                 engine_on = True
-                self.vessel.control.throttle = throttle
+                self.control.throttle = throttle
 
             if self.vessel.situation == self.space_center.VesselSituation.landed:
                 self.control.throttle = 0.0
                 self.set_stability_assist()
                 break
+
+        self.__print_status('LANDING WITH SCRIPT: OFF')
 
     def __load_data_stream(self):
         # Create KRPC data streams
@@ -329,63 +376,47 @@ class BaseRocket(metaclass=abc.ABCMeta):
         self.yaw_pid = self.conn.add_stream(getattr, self.auto_pilot, 'yaw_pid_gains')
         self.pitch_pid = self.conn.add_stream(getattr, self.auto_pilot, 'pitch_pid_gains')
 
-    def __mech_jeb_landing(self, touchdown_speed, latitude, longitude):
-        try:
-            self.vessel.control.rcs = True
-
-            self.mech_jeb.target_controller.set_position_target(
-                body=self.vessel.orbit.body,
-                latitude=latitude,
-                longitude=longitude
-            )
-
-            landing_autopilot = self.mech_jeb.landing_autopilot
-            landing_autopilot.enabled = True
-
-            landing_autopilot.touchdown_speed = touchdown_speed
-            landing_autopilot.land_at_position_target()
-
-            # cut throttle and enable SAS when landed
-            while self.vessel.situation != self.space_center.VesselSituation.landed:
-                time.sleep(0.01)
-            self.control.throttle = 0.0
-
-            landing_autopilot.enabled = False
-            self.set_stability_assist()
-
-        except Exception as error:
-            self.__catastrophic_failure(method_name='__mech_jeb_landing', error=error)
-
     def __toggle_airbrake(self, altitude_airbrake=10000):
-        # TODO: buscar freio aerodinamico automaticamente
-        # PEGAR ALTURA ALTOMATICA
-        srf_altitude = self.conn.get_call(getattr, self.vessel.flight(), 'surface_altitude')
-        expr = self.conn.krpc.Expression.less_than(
-            self.conn.krpc.Expression.call(srf_altitude),
-            self.conn.krpc.Expression.constant_double(altitude_airbrake))
-        event = self.conn.krpc.add_event(expr)
+        # # TODO: get altitude of airbrake automatically
+        # # PEGAR ALTURA ALTOMATICA
+        # srf_altitude = self.conn.get_call(getattr, self.vessel.flight(), 'surface_altitude')
+        # expr = self.conn.krpc.Expression.less_than(
+        #     self.conn.krpc.Expression.call(srf_altitude),
+        #     self.conn.krpc.Expression.constant_double(altitude_airbrake))
+        # event = self.conn.krpc.add_event(expr)
+        event = self.__get_event_less_then(goal='surface_altitude', value=altitude_airbrake)
         with event.condition:
             event.wait()
 
         self.vessel.control.toggle_action_group(1)
 
-    def __open_legs(self, altitude_airbrake=500):
-        srf_altitude = self.conn.get_call(getattr, self.vessel.flight(), 'surface_altitude')
-        expr = self.conn.krpc.Expression.less_than(
-            self.conn.krpc.Expression.call(srf_altitude),
-            self.conn.krpc.Expression.constant_double(altitude_airbrake))
-        event = self.conn.krpc.add_event(expr)
+    def __open_legs(self, altitude_to_open=500):
+        self.__print_status('SYSTEM OF LEGS: ON')
+        # srf_altitude = self.conn.get_call(getattr, self.vessel.flight(), 'surface_altitude')
+        # expr = self.conn.krpc.Expression.less_than(
+        #     self.conn.krpc.Expression.call(srf_altitude),
+        #     self.conn.krpc.Expression.constant_double(altitude_airbrake))
+        # event = self.conn.krpc.add_event(expr)
+        event = self.__get_event_less_then(goal='surface_altitude', value=altitude_to_open)
         with event.condition:
             event.wait()
 
         self.vessel.control.gear = True
+        self.__print_status('SYSTEM OF LEGS: OFF')
 
-    def __setup_abort_system(self):
-        abort = self.conn.add_stream(getattr, self.vessel.control, 'abort')
-        abort.add_callback(self.set_abort_control)
-        abort.start()
+    def __get_event_less_then(self, goal: str, value: int):
+        """
+        Create time warp until get this goal
+        """
+        srf_altitude = self.conn.get_call(getattr, self.vessel.flight(), goal)
+        expr = self.conn.krpc.Expression.less_than(
+            self.conn.krpc.Expression.call(srf_altitude),
+            self.conn.krpc.Expression.constant_double(value))
+        return self.conn.krpc.add_event(expr)
 
     def __set_sas_mode(self, sas_mode_name, sas=True, rcs=True):
+        self.__print_status('SAS MODE: ' + sas_mode_name)
+
         self.auto_pilot.disengage()
         time.sleep(0.001)
         self.control.sas = sas
@@ -413,36 +444,25 @@ class BaseRocket(metaclass=abc.ABCMeta):
         except Exception as error:
             self.__catastrophic_failure(method_name='__set_sas_mode ' + sas_mode_name, error=error)
 
+    def __setup_abort_system(self):
+        abort = self.conn.add_stream(getattr, self.vessel.control, 'abort')
+        abort.add_callback(self.set_abort_control)
+        abort.start()
+
     def __catastrophic_failure(self, error, method_name):
         print('\n' * 2)
-        print('ALERTA: Falha catastrofica em "' + method_name + '"')
+        self.__print_status('WARNING: CATASTROPHIC FAILURE "' + method_name + '"')
         print(error)
         print('\n' * 2)
 
-        print('ABORTANDO!!')
-        print('ABORTANDO!!')
+        print('ABORTING!!  ' * 2)
         self.set_abort_control(status=True)
-        print('ABORTANDO!!')
-        print('ABORTANDO!!')
-
-    def _print(self, status):
-        for task in self.__background_threads:
-            task._stop()
-
-        t = Thread(target=self.__print_status, args=(status,))
-        t.start()
-        self.__background_threads.append(t)
 
     def __print_status(self, status):
-        count = 10
-        while count > 1:
-            cls()
-            print(
-                f'COMMAND: {status}\n'
-                f'SITUATION: {self.vessel.situation}\n'
-                f'SPEED: {self.vessel.flight(self.reference_frame).speed}\n'
-                f'VELOCITY: {self.get_velocity()}\n'
-                f'POSITION: {self.get_position()}\n'
-            )
-            count -= 1
-            time.sleep(1)
+        print(
+            f'COMMAND: {status}\n'
+            f'SITUATION: {self.vessel.situation}\n'
+            f'SPEED: {self.vessel.flight(self.reference_frame).speed}\n'
+            f'VELOCITY: {self.get_velocity()}\n'
+            f'POSITION: {self.get_position()}\n'
+        )
