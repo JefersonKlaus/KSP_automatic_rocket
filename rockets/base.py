@@ -1,9 +1,11 @@
 import abc
-from numpy import math, linalg, arccos, inf, dot, clip
-from math import sin, cos, pi
-import time
-from threading import Thread
 import os
+import time
+from math import cos, pi, sin
+from threading import Thread
+
+from numpy import arccos, clip, dot, inf, linalg, math
+from telemetry import Telemetry
 
 
 def cls():
@@ -113,7 +115,7 @@ class BaseRocket(metaclass=abc.ABCMeta):
 
         self.__print_status('ALL SYSTEM OF LANDING: OFF')
 
-    def landing_by_script(self, altitude_airbrake=None):
+    def landing_anywhere(self):
         """
         Starts all threads needed to landing the rocket using just script
         This method just work with any rocket
@@ -129,7 +131,7 @@ class BaseRocket(metaclass=abc.ABCMeta):
         t.start()
         threads.append(t)
 
-        t = Thread(target=self.__script_landing, args=())
+        t = Thread(target=self.__script_landing_anywhere, args=())
         t.start()
         threads.append(t)
 
@@ -172,7 +174,8 @@ class BaseRocket(metaclass=abc.ABCMeta):
         burn_time = impact_time - decel_time / 2
         ground_track = ((burn_time - self.space_center.ut) * self.vessel.flight(rf).speed) + (
                 .5 * self.vessel.flight(rf).speed * decel_time)
-        print(ground_track)
+        # print(ground_track)
+        # TODO: study about ground_track
         return burn_time - self.space_center.ut
 
     def throttle_to_suicide_burn(self):
@@ -202,6 +205,13 @@ class BaseRocket(metaclass=abc.ABCMeta):
     def __unit_vector(self, vector):
         """ Returns the unit vector of the vector.  """
         return vector / linalg.norm(vector)
+
+    def do_when_landing(self):
+        """
+        First thing that rocket will do when touch the floor
+        called by __script_landing_anywhere
+        """
+        raise NotImplementedError()
 
     @abc.abstractmethod
     def set_abort_control(self, status):
@@ -254,9 +264,10 @@ class BaseRocket(metaclass=abc.ABCMeta):
 
         self.__print_status('LANDING WITH MECHJEB: OFF')
 
-    def __script_landing(self):
+    def __script_landing_anywhere(self):
         self.__print_status('LANDING WITH SCRIPT: ON')
 
+        # TODO: create feature to landing on defined position
         create_relative = self.conn.space_center.ReferenceFrame.create_relative
         # Coordinates of landing site
         landing_latitude = -(0 + (5.0 / 60) + (48.38 / 60 / 60))
@@ -307,12 +318,12 @@ class BaseRocket(metaclass=abc.ABCMeta):
         self.auto_pilot.engage()
         time.sleep(0.01)
 
+        self.set_retrograde()
+
         while self.time_to_suicide_burn() > 0:
             time.sleep(0.01)
             self.auto_pilot.disengage()
             time.sleep(0.01)
-            self.set_retrograde()
-            # print(self.vessel.flight(self.reference_frame).speed)
             print(self.time_to_suicide_burn())
             time.sleep(.5)
             continue
@@ -333,48 +344,24 @@ class BaseRocket(metaclass=abc.ABCMeta):
                 self.control.throttle = throttle
 
             if self.vessel.situation == self.space_center.VesselSituation.landed:
-                self.control.throttle = 0.0
-                self.set_stability_assist()
+                try:
+                    self.do_when_landing()
+                except NotImplementedError:
+                    self.control.throttle = 0.0
+                    self.set_stability_assist()
                 break
 
         self.__print_status('LANDING WITH SCRIPT: OFF')
 
     def __load_data_stream(self):
-        # Create KRPC data streams
-        self.altitude = self.conn.add_stream(getattr, self.vessel.flight(), 'surface_altitude')
-        self.ut = self.conn.add_stream(getattr, self.conn.space_center, 'ut')
-        self.aero_force = self.conn.add_stream(getattr, self.vessel.flight(), 'aerodynamic_force')
-        self.mass = self.conn.add_stream(getattr, self.vessel, 'mass')
-        self.moment_of_inertia = self.conn.add_stream(getattr, self.vessel, 'moment_of_inertia')
-        self.inertia_tensor = self.conn.add_stream(getattr, self.vessel, 'inertia_tensor')
-        self.com = self.conn.add_stream(getattr, self.vessel.flight(), 'center_of_mass')
-        self.available_torque = self.conn.add_stream(getattr, self.vessel, 'available_torque')
-        self.available_thrust = self.conn.add_stream(getattr, self.vessel, 'available_thrust')
-        self.gravity = self.conn.add_stream(getattr, self.vessel.orbit.body, 'surface_gravity')
+        telemetry = Telemetry(self.conn, self.vessel)
+        self.altitude = telemetry.get_altitude()
+        self.mass = telemetry.get_mass()
+        self.available_thrust = telemetry.get_available_thrust()
+        self.gravity = telemetry.get_surface_gravity()
 
-        self.latitude = self.conn.add_stream(getattr, self.vessel.flight(), 'latitude')
-        self.longitude = self.conn.add_stream(getattr, self.vessel.flight(), 'longitude')
-
-        self.atm_density = self.conn.add_stream(getattr, self.vessel.flight(), 'atmosphere_density')
-        self.dyn_pressure = self.conn.add_stream(getattr, self.vessel.flight(), 'dynamic_pressure')
-        self.stat_pressure = self.conn.add_stream(getattr, self.vessel.flight(), 'static_pressure')
-
-        self.lift = self.conn.add_stream(getattr, self.vessel.flight(), 'lift')
-        self.drag = self.conn.add_stream(getattr, self.vessel.flight(), 'drag')
-        self.pitch = self.conn.add_stream(getattr, self.vessel.flight(), 'pitch')
-        self.heading = self.conn.add_stream(getattr, self.vessel.flight(), 'heading')
-        self.roll = self.conn.add_stream(getattr, self.vessel.flight(), 'roll')
-
-        self.throttle = self.conn.add_stream(getattr, self.vessel.control, 'throttle')
-        self.right = self.conn.add_stream(getattr, self.vessel.control, 'right')
-        self.up = self.conn.add_stream(getattr, self.vessel.control, 'up')
-        self.pitch_control = self.conn.add_stream(getattr, self.vessel.control, 'pitch')
-        self.roll_control = self.conn.add_stream(getattr, self.vessel.control, 'roll')
-        self.yaw_control = self.conn.add_stream(getattr, self.vessel.control, 'yaw')
-
-        self.roll_pid = self.conn.add_stream(getattr, self.auto_pilot, 'roll_pid_gains')
-        self.yaw_pid = self.conn.add_stream(getattr, self.auto_pilot, 'yaw_pid_gains')
-        self.pitch_pid = self.conn.add_stream(getattr, self.auto_pilot, 'pitch_pid_gains')
+        self.latitude = telemetry.get_latitude()
+        self.longitude = telemetry.get_longitude()
 
     def __toggle_airbrake(self, altitude_airbrake=10000):
         # # TODO: get altitude of airbrake automatically
@@ -459,10 +446,14 @@ class BaseRocket(metaclass=abc.ABCMeta):
         self.set_abort_control(status=True)
 
     def __print_status(self, status):
-        print(
-            f'COMMAND: {status}\n'
-            f'SITUATION: {self.vessel.situation}\n'
-            f'SPEED: {self.vessel.flight(self.reference_frame).speed}\n'
-            f'VELOCITY: {self.get_velocity()}\n'
-            f'POSITION: {self.get_position()}\n'
-        )
+        try:
+            print(
+                f'COMMAND: {status}\n'
+                f'SITUATION: {self.vessel.situation}\n'
+                f'SPEED: {self.vessel.flight(self.reference_frame).speed}\n'
+                f'LATITUDE: {self.latitude()}\n'
+                f'LONGITUDE: {self.longitude()}\n'
+            )
+        except Exception as error:
+            "Telemetry FAIL"
+            print(error)
