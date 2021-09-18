@@ -2,9 +2,22 @@ class Telemetry:
     conn = None
     vessel = None
 
-    def __init__(self, conn, vessel):
+    def __init__(self, conn, vessel, reference_frame=None):
         self.conn = conn
         self.vessel = vessel
+
+        if reference_frame:
+            self.reference_frame = reference_frame
+        else:
+            self.reference_frame = self.vessel.orbit.body.reference_frame
+
+        # velocity = self.conn.add_stream(self.vessel.velocity, landing_reference_frame)
+        # v_speed = self.conn.add_stream(getattr, self.vessel.flight(landing_reference_frame), 'vertical_speed')
+        # h_speed = self.conn.add_stream(getattr, self.vessel.flight(landing_reference_frame), 'horizontal_speed')
+        # position = self.conn.add_stream(self.vessel.position, landing_reference_frame)
+        # rotation = self.conn.add_stream(self.vessel.rotation, landing_reference_frame)
+        # direction = self.conn.add_stream(self.vessel.direction, landing_reference_frame)
+        # angular_velocity = self.conn.add_stream(self.vessel.angular_velocity, landing_reference_frame)
 
     def get_altitude(self):
         return self.conn.add_stream(getattr, self.vessel.flight(), 'surface_altitude')
@@ -35,6 +48,9 @@ class Telemetry:
 
     def get_surface_gravity(self):
         return self.conn.add_stream(getattr, self.vessel.orbit.body, 'surface_gravity')
+
+    def get_vertical_speed(self):
+        return self.conn.add_stream(getattr, self.vessel.flight(self.reference_frame), 'vertical_speed')
 
     def get_latitude(self):
         return self.conn.add_stream(getattr, self.vessel.flight(), 'latitude')
