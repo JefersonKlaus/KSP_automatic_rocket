@@ -81,6 +81,7 @@ class Telemetry:
 
     def get_drag(self):
         return self.vessel.flight().drag
+        # return self.vessel.flight(vessel.orbit.body.reference_frame).drag
 
     def get_drag_coefficient(self):
         return self.vessel.flight().drag_coefficient

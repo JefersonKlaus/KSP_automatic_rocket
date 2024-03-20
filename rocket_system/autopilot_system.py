@@ -1,5 +1,6 @@
 import abc
 import time
+import math
 from enum import Enum
 
 from tools.telemetry import Telemetry
@@ -92,7 +93,7 @@ class AutoPilotSystem:
             self.vessel.auto_pilot.reference_frame = self.reference_frame
             self.auto_pilot.target_pitch_and_heading(pitch, heading)
 
-            # Define a altura desejada
+            # Define a altitude desejada
             self.orbit.target_altitude = altitude
 
             # Ativa o motor e faz o lançamento
@@ -102,6 +103,8 @@ class AutoPilotSystem:
                 self.vessel.control.throttle = self.get_engine_efficiency(
                     altitude=self.telemetry.get_altitude(),
                     speed=self.telemetry.get_velocity(),
+                    mass=self.telemetry.get_mass(),
+                    drag=self.telemetry.get_drag(),
                 )
 
             if func_nex_stage:
@@ -111,11 +114,16 @@ class AutoPilotSystem:
                 pass
 
             # Espera até que o foguete esteja fora do solo
-            while self.vessel.flight().mean_altitude < 500:
+            while self.vessel.flight().mean_altitude < 300:
                 pass
 
             # Loop principal do lançamento
             while True:
+                print(
+                    self.vessel.resources_in_decouple_stage(
+                        self.vessel.control.current_stage - 1
+                    ).amount("LiquidFuel")
+                )
                 # Verifica se o combustível do estágio atual acabou
                 # FIXME: there is a bug (KRPC) that was need puth current stage -1 to get the right fuel
                 if (
@@ -248,30 +256,32 @@ class AutoPilotSystem:
 
         self.system_running = RocketSystemRunning.NONE
 
-    def get_engine_efficiency(self, altitude, speed):
+    def get_engine_efficiency(self, altitude, speed, mass, drag):
         """
-        Calcula a eficiência do motor do foguete baseado na altitude e velocidade atual.
+        Calcula a eficiência do motor do foguete baseado na altitude, velocidade, massa e arrasto.
 
         Args:
-            altitude (float): altitude atual do foguete, em metros.
-            speed (float): velocidade atual do foguete, em m/s.
+            altitude (float): Altitude atual do foguete, em metros.
+            speed (float): Velocidade atual do foguete, em m/s.
+            mass (float): Massa total do foguete, em kg.
+            drag (tuple): Força de arrasto em X, Y e Z, em Newtons.
 
         Returns:
-            float: porcentagem de potência do motor necessária para garantir melhor eficiência.
+            float: Porcentagem de potência do motor necessária para garantir melhor eficiência.
         """
-        # Define os coeficientes para o cálculo da eficiência do motor.
-        c1 = -0.000090004
-        c2 = 0.0035788
-        c3 = -0.046452
-        c4 = 0.23404
-        c5 = -0.15537
-        c6 = 0.051963
 
-        # Calcula a eficiência do motor baseada na altitude e velocidade atual.
+        # Define os coeficientes para o cálculo da eficiência do motor.
+        c1 = 0.5
+        c2 = 0.0001
+        c3 = 0.00001
+
+        # Calcula a eficiência do motor baseada na altitude, velocidade, massa e arrasto.
         x = altitude / 1000
         y = speed / 1000
+        z = mass / 1000
+        drag_magnitude = (drag[0] ** 2 + drag[1] ** 2 + drag[2] ** 2) ** 0.5
         efficiency = (
-            c1 * x**5 + c2 * x**4 + c3 * x**3 + c4 * x**2 + c5 * x + c6 * y
+            c1 + c2 * (1 - z) * (1 - (x / 100)) * (1 + (y / 100)) - c3 * drag_magnitude
         )
 
         # Limita a eficiência do motor entre 0 e 100%.
@@ -282,7 +292,7 @@ class AutoPilotSystem:
         return efficiency * 100
 
     @abc.abstractmethod
-    def set_abort_control(self, status):
+    def set_abort_control(self, status: bool):
         raise NotImplementedError('Method "set_abort_control" not implemented')
 
     def __set_sas_mode(self, sas_mode_name, sas=True, rcs=True):

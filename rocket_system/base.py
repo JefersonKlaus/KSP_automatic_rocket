@@ -28,8 +28,16 @@ class BaseRocket(AutoPilotSystem, metaclass=abc.ABCMeta):
         self, altitude, throttle=1, pitch=90, heading=90, stage_limit=None
     ):
         """
-        pitch (float): Target pitch angle, in degrees between -90° and +90°.
-        heading (float): Target heading angle, in degrees between 0° and 360°.
+
+        Args:
+            altitude (int): altitude to turn off the engines
+            throttle: (int): from 0 to 1
+            pitch (float): Target pitch angle, in degrees between -90° and +90°.
+            heading (float): Target heading angle, in degrees between 0° and 360°.
+            stage_limit (int): 
+            
+        Returns:
+            None
         """
         self.exec_lift_off_in_direction(
             altitude=altitude,
