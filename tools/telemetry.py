@@ -28,6 +28,9 @@ class Telemetry:
     def get_aerodynamic_force(self):
         return self.vessel.flight().aerodynamic_force
 
+    def get_g_force(self):
+        return self.vessel.flight().g_force
+
     def get_mass(self):
         return self.vessel.mass
 

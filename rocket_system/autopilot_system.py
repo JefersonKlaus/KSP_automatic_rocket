@@ -20,7 +20,10 @@ class AutoPilotSystem:
     conn = None
     vessel = None
     space_center = None
+    vessel = None
+    auto_pilot = None
     reference_frame = None
+    orbit = None
     mech_jeb = None
     suicide_burn = None
     telemetry = None
@@ -32,7 +35,8 @@ class AutoPilotSystem:
         self.space_center = self.conn.space_center
         self.vessel = vessel
         self.auto_pilot = self.vessel.auto_pilot
-        self.reference_frame = self.vessel.orbit.body.reference_frame
+        self.reference_frame = self.vessel.surface_reference_frame
+        self.orbit = self.vessel.orbit
         self.mech_jeb = self.conn.mech_jeb
         self.telemetry = Telemetry(self.conn, self.vessel)
 
@@ -90,8 +94,11 @@ class AutoPilotSystem:
             self.vessel.control.rcs = False
             time.sleep(0.001)
 
-            self.vessel.auto_pilot.reference_frame = self.reference_frame
-            self.auto_pilot.target_pitch_and_heading(pitch, heading)
+            # vertical positon
+            # TODO: setar a posicao atual como referencia
+            self.auto_pilot.reference_frame = self.reference_frame
+            self.auto_pilot.target_pitch = 90
+            self.auto_pilot.target_heading = 90
 
             # Define a altitude desejada
             self.orbit.target_altitude = altitude
@@ -104,7 +111,6 @@ class AutoPilotSystem:
                     altitude=self.telemetry.get_altitude(),
                     speed=self.telemetry.get_velocity(),
                     mass=self.telemetry.get_mass(),
-                    drag=self.telemetry.get_drag(),
                 )
 
             if func_nex_stage:
@@ -117,13 +123,11 @@ class AutoPilotSystem:
             while self.vessel.flight().mean_altitude < 300:
                 pass
 
+            self.auto_pilot.target_pitch = pitch
+            self.auto_pilot.target_heading = heading
+
             # Loop principal do lançamento
             while True:
-                print(
-                    self.vessel.resources_in_decouple_stage(
-                        self.vessel.control.current_stage - 1
-                    ).amount("LiquidFuel")
-                )
                 # Verifica se o combustível do estágio atual acabou
                 # FIXME: there is a bug (KRPC) that was need puth current stage -1 to get the right fuel
                 if (
@@ -134,11 +138,11 @@ class AutoPilotSystem:
                     and self.vessel.resources_in_decouple_stage(
                         self.vessel.control.current_stage - 1
                     ).amount("SolidFuel")
-                    < 0.1
+                    < 1  # FIXME: validar a questao do solid, pois motores de separacao tem combustivel
                 ):
                     # Troca para o próximo estágio
                     if stage_limit >= self.vessel.control.current_stage:
-                        break
+                        pass
                     else:
                         if func_nex_stage:
                             func_nex_stage()
@@ -146,8 +150,15 @@ class AutoPilotSystem:
                 # Verifica se o apoastro atingiu a altitude desejada
                 if self.orbit.apoapsis_altitude >= altitude:
                     # Desliga o motor
-                    self.control.throttle = 0.0
+                    self.vessel.control.throttle = 0.0
                     break
+
+                # Recalcula eficiencia do motor
+                self.vessel.control.throttle = self.get_engine_efficiency(
+                    altitude=self.telemetry.get_altitude(),
+                    speed=self.telemetry.get_velocity(),
+                    mass=self.telemetry.get_mass(),
+                )
 
         except Exception as error:
             self.__catastrophic_failure(method_name="lift_off", error=error)
@@ -256,15 +267,14 @@ class AutoPilotSystem:
 
         self.system_running = RocketSystemRunning.NONE
 
-    def get_engine_efficiency(self, altitude, speed, mass, drag):
+    def get_engine_efficiency(self, altitude, speed, mass):
         """
-        Calcula a eficiência do motor do foguete baseado na altitude, velocidade, massa e arrasto.
+        Calcula a eficiência do motor do foguete baseado na altitude, velocidade e massa.
 
         Args:
             altitude (float): Altitude atual do foguete, em metros.
             speed (float): Velocidade atual do foguete, em m/s.
             mass (float): Massa total do foguete, em kg.
-            drag (tuple): Força de arrasto em X, Y e Z, em Newtons.
 
         Returns:
             float: Porcentagem de potência do motor necessária para garantir melhor eficiência.
@@ -273,16 +283,12 @@ class AutoPilotSystem:
         # Define os coeficientes para o cálculo da eficiência do motor.
         c1 = 0.5
         c2 = 0.0001
-        c3 = 0.00001
 
-        # Calcula a eficiência do motor baseada na altitude, velocidade, massa e arrasto.
+        # Calcula a eficiência do motor baseada na altitude, velocidade e massa.
         x = altitude / 1000
         y = speed / 1000
         z = mass / 1000
-        drag_magnitude = (drag[0] ** 2 + drag[1] ** 2 + drag[2] ** 2) ** 0.5
-        efficiency = (
-            c1 + c2 * (1 - z) * (1 - (x / 100)) * (1 + (y / 100)) - c3 * drag_magnitude
-        )
+        efficiency = c1 + c2 * (1 - z) * (1 - (x / 100)) * (1 + (y / 100))
 
         # Limita a eficiência do motor entre 0 e 100%.
         efficiency = max(0, efficiency)

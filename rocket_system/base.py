@@ -11,18 +11,8 @@ def cls():
 
 
 class BaseRocket(AutoPilotSystem, metaclass=abc.ABCMeta):
-    auto_pilot = None
-    current_stage = None
-
     def __init__(self, conn, vessel):
         super().__init__(conn=conn, vessel=vessel)
-
-        self.space_center = conn.space_center
-        self.vessel = vessel
-
-        self.control = self.vessel.control
-        self.orbit = self.vessel.orbit
-        self.reference_frame = self.vessel.orbit.body.reference_frame
 
     def lift_off_in_the_direction(
         self, altitude, throttle=1, pitch=90, heading=90, stage_limit=None
@@ -32,10 +22,10 @@ class BaseRocket(AutoPilotSystem, metaclass=abc.ABCMeta):
         Args:
             altitude (int): altitude to turn off the engines
             throttle: (int): from 0 to 1
-            pitch (float): Target pitch angle, in degrees between -90° and +90°.
-            heading (float): Target heading angle, in degrees between 0° and 360°.
-            stage_limit (int): 
-            
+            pitch (float): Target pitch angle, in degrees between -90° and +90°. 90 Up | -90 Down
+            heading (float): Target heading angle, in degrees between 0° and 360°. 0 north | 180 south | 90 east | 270 west
+            stage_limit (int):
+
         Returns:
             None
         """
