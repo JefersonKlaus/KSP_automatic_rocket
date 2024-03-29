@@ -95,10 +95,10 @@ class AutoPilotSystem:
             time.sleep(0.001)
 
             # vertical positon
-            # TODO: setar a posicao atual como referencia
             self.auto_pilot.reference_frame = self.reference_frame
-            self.auto_pilot.target_pitch = 90
-            self.auto_pilot.target_heading = 90
+            self.auto_pilot.target_pitch = self.vessel.flight().pitch
+            # self.auto_pilot.target_heading = self.vessel.flight().heading
+            self.auto_pilot.target_heading = 0
 
             # Define a altitude desejada
             self.orbit.target_altitude = altitude
@@ -129,17 +129,7 @@ class AutoPilotSystem:
             # Loop principal do lançamento
             while True:
                 # Verifica se o combustível do estágio atual acabou
-                # FIXME: there is a bug (KRPC) that was need puth current stage -1 to get the right fuel
-                if (
-                    self.vessel.resources_in_decouple_stage(
-                        self.vessel.control.current_stage - 1
-                    ).amount("LiquidFuel")
-                    < 0.1
-                    and self.vessel.resources_in_decouple_stage(
-                        self.vessel.control.current_stage - 1
-                    ).amount("SolidFuel")
-                    < 1  # FIXME: validar a questao do solid, pois motores de separacao tem combustivel
-                ):
+                if not self.current_stage_has_fuel():
                     # Troca para o próximo estágio
                     if stage_limit >= self.vessel.control.current_stage:
                         pass
@@ -164,6 +154,18 @@ class AutoPilotSystem:
             self.__catastrophic_failure(method_name="lift_off", error=error)
 
         self.auto_pilot.disengage()
+
+    def current_stage_has_fuel(self) -> bool:
+        return (
+            self.vessel.resources_in_decouple_stage(
+                self.vessel.control.current_stage - 1
+            ).amount("LiquidFuel")
+            > 0.1
+            or self.vessel.resources_in_decouple_stage(
+                self.vessel.control.current_stage - 1
+            ).amount("SolidFuel")
+            > 1  # FIXME: validar a questao do solid, pois motores de separacao tem combustivel
+        )
 
     def exec_auto_landing_using_mech_jeb(
         self, touchdown_speed=3, latitude=None, longitude=None
@@ -319,16 +321,34 @@ class AutoPilotSystem:
                 self.vessel.control.sas_mode = (
                     self.conn.space_center.SASMode.stability_assist
                 )
+            elif sas_mode_name == "maneuver":
+                self.vessel.control.sas_mode = self.conn.space_center.SASMode.maneuver
 
             elif sas_mode_name == "radial":
                 self.vessel.control.sas_mode = self.conn.space_center.SASMode.radial
+
+            elif sas_mode_name == "anti_normal":
+                self.vessel.control.sas_mode = (
+                    self.conn.space_center.SASMode.anti_normal
+                )
+
+            elif sas_mode_name == "normal":
+                self.vessel.control.sas_mode = self.conn.space_center.SASMode.normal
+
+            elif sas_mode_name == "target":
+                self.vessel.control.sas_mode = self.conn.space_center.SASMode.target
+
+            elif sas_mode_name == "anti_target":
+                self.vessel.control.sas_mode = (
+                    self.conn.space_center.SASMode.anti_target
+                )
 
             elif sas_mode_name == "off":
                 pass
 
             else:
                 print("\n" * 2)
-                print('ALERTA: SAS_MODE "' + sas_mode_name + '" not found')
+                print('Warning: SAS_MODE "' + sas_mode_name + '" not found')
                 print("\n" * 2)
 
         except Exception as error:
