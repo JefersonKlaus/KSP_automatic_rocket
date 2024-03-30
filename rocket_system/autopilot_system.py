@@ -36,8 +36,11 @@ class AutoPilotSystem:
         self.vessel = vessel
         self.auto_pilot = self.vessel.auto_pilot
         self.reference_frame = self.vessel.surface_reference_frame
-        self.orbit = self.vessel.orbit
         self.mech_jeb = self.conn.mech_jeb
+
+        self.orbit = self.vessel.orbit
+        self.body = self.space_center.bodies[self.orbit.body.name]
+
         self.telemetry = Telemetry(self.conn, self.vessel)
 
         # TODO: update suicideBurn code
@@ -64,6 +67,19 @@ class AutoPilotSystem:
 
     def set_radial(self, sas=True, rcs=True):
         self.__set_sas_mode("radial", sas=sas, rcs=rcs)
+
+    def create_circularization_node(self):
+        ut = self.conn.add_stream(getattr, self.conn.space_center, "ut")
+        mu = self.body.gravitational_parameter
+        r = self.orbit.apoapsis
+        a1 = self.orbit.semi_major_axis
+        a2 = r
+        v1 = math.sqrt(mu * ((2.0 / r) - (1.0 / a1)))
+        v2 = math.sqrt(mu * ((2.0 / r) - (1.0 / a2)))
+        delta_v = v2 - v1
+        return self.vessel.control.add_node(
+            ut() + self.orbit.time_to_apoapsis, prograde=delta_v
+        )
 
     def exec_lift_off_in_direction(
         self,
@@ -144,11 +160,32 @@ class AutoPilotSystem:
                     break
 
                 # Recalcula eficiencia do motor
-                self.vessel.control.throttle = self.get_engine_efficiency(
+                # se força G baixar, acelera motor
+                _throttle = self.get_engine_efficiency(
                     altitude=self.telemetry.get_altitude(),
                     speed=self.telemetry.get_velocity(),
                     mass=self.telemetry.get_mass(),
                 )
+                if self.telemetry.get_g_force() < 1:
+                    self.vessel.control.throttle = self.vessel.control.throttle + 0.001
+                else:
+                    if (self.vessel.control.throttle - 0.001) > _throttle:
+                        self.vessel.control.throttle = (
+                            self.vessel.control.throttle - 0.001
+                        )
+                    else:
+                        self.vessel.control.throttle = _throttle
+
+                # recalcula novo angulo
+                _altitude = self.telemetry.get_altitude()
+                _turn_start_altitude = self.body.atmosphere_depth / 4
+                if _altitude > _turn_start_altitude:
+                    frac = (_altitude - _turn_start_altitude) / (
+                        altitude - _turn_start_altitude
+                    )
+                    new_turn_angle = frac * pitch
+                    if abs(new_turn_angle) > 0.5:
+                        self.auto_pilot.target_pitch = pitch - new_turn_angle
 
         except Exception as error:
             self.__catastrophic_failure(method_name="lift_off", error=error)
@@ -297,7 +334,23 @@ class AutoPilotSystem:
         efficiency = min(1, efficiency)
 
         # Retorna a porcentagem de potência do motor necessária para garantir melhor eficiência.
-        return efficiency * 100
+        return efficiency
+
+        # limitar a 3G de impucho
+        # _current_throttle = self.vessel.control.throttle
+        # print(f'eficiencia {str(efficiency)} G {str(self.telemetry.get_g_force())} Atual {str(_current_throttle)}')
+        # if self.telemetry.get_g_force() > 3:
+        #     return _current_throttle - 0.01
+        # else:
+        #     _new_throttle = _current_throttle + 0.01
+        #     # if _new_throttle > 1:
+        #     #     return efficiency
+        #     # else:
+        #     #     if _new_throttle > efficiency:
+        #     #         return efficiency
+        #     #     else:
+        #     #         return _new_throttle
+        #     return _new_throttle
 
     @abc.abstractmethod
     def set_abort_control(self, status: bool):

@@ -3,12 +3,12 @@ from rocket_system.base import BaseRocket
 
 class BasicRocket(BaseRocket):
     def set_stages(self, stage):
-        if stage >= 4:
+        if stage >= 3:
             self.vessel.control.activate_next_stage()
             return
         else:
-            print(stage)
-            print("SEM STAGIO")
+            # print(stage)
+            # print("SEM STAGIO")
             return
 
     def set_abort_control(self, status: bool):

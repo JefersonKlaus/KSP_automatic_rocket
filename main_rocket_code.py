@@ -12,7 +12,7 @@ if __name__ == "__main__":
 
     vessel = conn.space_center.active_vessel
 
-    for i in range(5, 0, -1):
+    for i in range(3, 0, -1):
         print(str(i) + " ...")
         time.sleep(1)
 
@@ -20,5 +20,8 @@ if __name__ == "__main__":
     # Rocket example one
     example_rocket_1 = BasicRocket(conn=conn, vessel=vessel)
     example_rocket_1.lift_off_in_the_direction(
-        altitude=100000, pitch=90, heading=270, stage_limit=2
+        altitude=100000, pitch=87, heading=90, stage_limit=0
     )
+
+    example_rocket_1.set_prograde(sas=True, rcs=False)
+    example_rocket_1.create_circularization_node()
