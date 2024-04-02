@@ -11,7 +11,9 @@ if __name__ == "__main__":
 
     vessel = conn.space_center.active_vessel
     biome = Biome(vessel=vessel, conn=conn)
+    auto_pilot = vessel.auto_pilot
     print(biome.get_name())
+    # node = vessel.control.nodes[0]
 
     from IPython import embed
     embed()

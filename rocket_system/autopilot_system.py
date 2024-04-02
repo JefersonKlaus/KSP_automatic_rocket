@@ -81,6 +81,61 @@ class AutoPilotSystem:
             ut() + self.orbit.time_to_apoapsis, prograde=delta_v
         )
 
+    def exec_node(self, node, rcs=False):
+        self.auto_pilot.engage()
+        time.sleep(0.001)
+
+        self.vessel.control.rcs = rcs
+        time.sleep(0.001)
+
+        # set the position
+        self.auto_pilot.reference_frame = node.reference_frame
+        self.auto_pilot.target_direction = (0, 1, 0)
+        self.auto_pilot.wait()
+
+        # get burn time
+        F = self.vessel.available_thrust
+        Isp = self.vessel.specific_impulse * 9.82
+        m0 = self.vessel.mass
+        m1 = m0 / math.exp(node.remaining_delta_v / Isp)
+        flow_rate = F / Isp
+        burn_time = (m0 - m1) / flow_rate
+
+        # get current time and move until burn_time/2 less a security margin
+        remaining_time = node.time_to
+        current_ut = self.conn.space_center.ut
+        target_ut = current_ut + remaining_time - (burn_time / 2) - 10
+        self.conn.space_center.warp_to(target_ut)
+
+        # waite to get the target time
+        while self.conn.space_center.ut < target_ut:
+            time.sleep(0.1)
+
+        # turn on the engine
+        self.vessel.control.throttle = 1
+        while node.remaining_delta_v > 100:
+            time.sleep(0.1)
+
+        # reduce to 10% and wait to reduce to 1%
+        self.vessel.control.throttle = 0.1
+        while node.remaining_delta_v > 10:
+            time.sleep(0.1)
+
+        # reduce to 1% and wait to turn off
+        self.vessel.control.throttle = 0.01
+        las_remaining_delta_v = node.remaining_delta_v
+        while node.remaining_delta_v > 1:
+            time.sleep(0.1)
+            if node.remaining_delta_v > las_remaining_delta_v:
+                break
+            else:
+                las_remaining_delta_v = node.remaining_delta_v
+
+        # turn off
+        self.vessel.control.throttle = 0
+        self.auto_pilot.disengage()
+        self.vessel.control.rcs = False
+
     def exec_lift_off_in_direction(
         self,
         altitude,
@@ -166,7 +221,10 @@ class AutoPilotSystem:
                     speed=self.telemetry.get_velocity(),
                     mass=self.telemetry.get_mass(),
                 )
+                # garante que esteja acelerando no minimo a 2g
                 if self.telemetry.get_g_force() < 1:
+                    self.vessel.control.throttle = self.vessel.control.throttle + 0.01
+                elif self.telemetry.get_g_force() < 2:
                     self.vessel.control.throttle = self.vessel.control.throttle + 0.001
                 else:
                     if (self.vessel.control.throttle - 0.001) > _throttle:

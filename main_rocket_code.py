@@ -20,8 +20,9 @@ if __name__ == "__main__":
     # Rocket example one
     example_rocket_1 = BasicRocket(conn=conn, vessel=vessel)
     example_rocket_1.lift_off_in_the_direction(
-        altitude=100000, pitch=87, heading=90, stage_limit=0
+        altitude=100000, pitch=85, heading=90, stage_limit=0
     )
 
     example_rocket_1.set_prograde(sas=True, rcs=False)
-    example_rocket_1.create_circularization_node()
+    node = example_rocket_1.create_circularization_node()
+    example_rocket_1.exec_node(node=node)
