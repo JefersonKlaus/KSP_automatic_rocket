@@ -3,8 +3,8 @@ from rocket_system.base import BaseRocket
 
 class BasicRocket(BaseRocket):
     def set_stages(self, stage):
-        if stage >= 3:
-            self.vessel.control.activate_next_stage()
+        if stage >= 1:
+            self.active_stage()
             return
         else:
             # print(stage)
@@ -17,7 +17,7 @@ class BasicRocket(BaseRocket):
             self.vessel.control.throttle = 0
 
             for _ in range(10, 0,):
-                self.vessel.control.activate_next_stage()
+                self.active_stage()
 
 
     def get_process_to_landing(self):

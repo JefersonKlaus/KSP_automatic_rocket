@@ -6,6 +6,10 @@ from enum import Enum
 from tools.telemetry import Telemetry
 
 from .suicide_burn import SuicideBurn
+import logging
+
+
+logging.basicConfig(level=logging.INFO)
 
 
 class RocketSystemRunning(Enum):
@@ -33,9 +37,11 @@ class AutoPilotSystem:
     def __init__(self, conn, vessel):
         self.conn = conn
         self.space_center = self.conn.space_center
+        
         self.vessel = vessel
         self.auto_pilot = self.vessel.auto_pilot
         self.reference_frame = self.vessel.surface_reference_frame
+        
         self.mech_jeb = self.conn.mech_jeb
 
         self.orbit = self.vessel.orbit
@@ -50,7 +56,7 @@ class AutoPilotSystem:
 
         # TODO: remove it
         self.altitude = self.telemetry.get_latitude_stream()
-
+    
         self.__setup_abort_system()
 
     def set_sas_mode(self, sas=True, rcs=True):
@@ -113,18 +119,23 @@ class AutoPilotSystem:
 
         # turn on the engine
         self.vessel.control.throttle = 1
-        while node.remaining_delta_v > 100:
+        while node.remaining_delta_v > 15:
             time.sleep(0.1)
 
-        # reduce to 10% and wait to reduce to 1%
+        # reduce to 10% and wait to reduce to 0.5%
         self.vessel.control.throttle = 0.1
-        while node.remaining_delta_v > 10:
-            time.sleep(0.1)
-
-        # reduce to 1% and wait to turn off
-        self.vessel.control.throttle = 0.01
         las_remaining_delta_v = node.remaining_delta_v
         while node.remaining_delta_v > 1:
+            time.sleep(0.1)
+            if node.remaining_delta_v > las_remaining_delta_v:
+                break
+            else:
+                las_remaining_delta_v = node.remaining_delta_v
+
+        # reduce to 0.5% and wait to turn off
+        self.vessel.control.throttle = 0.005
+        las_remaining_delta_v = node.remaining_delta_v
+        while node.remaining_delta_v > 0:
             time.sleep(0.1)
             if node.remaining_delta_v > las_remaining_delta_v:
                 break
@@ -135,6 +146,7 @@ class AutoPilotSystem:
         self.vessel.control.throttle = 0
         self.auto_pilot.disengage()
         self.vessel.control.rcs = False
+        node.remove()
 
     def exec_lift_off_in_direction(
         self,
@@ -158,6 +170,7 @@ class AutoPilotSystem:
             None
         """
         try:
+            logging.info("Auto Pilot: ENGAGED")
             self.auto_pilot.engage()
             time.sleep(0.001)
 
@@ -166,15 +179,17 @@ class AutoPilotSystem:
             time.sleep(0.001)
 
             # vertical positon
+            logging.info("Position: VERTICAL")
             self.auto_pilot.reference_frame = self.reference_frame
             self.auto_pilot.target_pitch = self.vessel.flight().pitch
             # self.auto_pilot.target_heading = self.vessel.flight().heading
             self.auto_pilot.target_heading = 0
 
-            # Define a altitude desejada
+            # Altitude target
             self.orbit.target_altitude = altitude
 
-            # Ativa o motor e faz o lançamento
+            # Start rocket
+            logging.info("Engine: FULL")
             if throttle:
                 self.vessel.control.throttle = throttle
             else:
@@ -185,6 +200,7 @@ class AutoPilotSystem:
                 )
 
             if func_nex_stage:
+                logging.info("Stage: NEXT")
                 func_nex_stage()
 
             while self.vessel.available_thrust == 0:
@@ -203,14 +219,17 @@ class AutoPilotSystem:
                 if not self.current_stage_has_fuel():
                     # Troca para o próximo estágio
                     if stage_limit >= self.vessel.control.current_stage:
+                        logging.info("Stage: LIMIT")
                         pass
                     else:
                         if func_nex_stage:
+                            logging.info("Stage: NEXT")
                             func_nex_stage()
 
                 # Verifica se o apoastro atingiu a altitude desejada
                 if self.orbit.apoapsis_altitude >= altitude:
                     # Desliga o motor
+                    logging.info("Engine: OFF")
                     self.vessel.control.throttle = 0.0
                     break
 
@@ -251,14 +270,14 @@ class AutoPilotSystem:
         self.auto_pilot.disengage()
 
     def current_stage_has_fuel(self) -> bool:
+        stage_resource = self.vessel.resources_in_decouple_stage(
+            stage=self.vessel.control.current_stage - 1, cumulative=False
+        )
+        liquid_fuel = self.conn.add_stream(stage_resource.amount, "LiquidFuel")
+        solid_fuel = self.conn.add_stream(stage_resource.amount, "SolidFuel")
         return (
-            self.vessel.resources_in_decouple_stage(
-                self.vessel.control.current_stage - 1
-            ).amount("LiquidFuel")
-            > 0.1
-            or self.vessel.resources_in_decouple_stage(
-                self.vessel.control.current_stage - 1
-            ).amount("SolidFuel")
+            liquid_fuel() > 0.1
+            or solid_fuel()
             > 1  # FIXME: validar a questao do solid, pois motores de separacao tem combustivel
         )
 

@@ -35,7 +35,7 @@ class BaseRocket(AutoPilotSystem, metaclass=abc.ABCMeta):
             pitch=pitch,
             heading=heading,
             stage_limit=stage_limit,
-            func_nex_stage=self.next_stage,
+            func_nex_stage=self._next_stage,
         )
 
     def landing_with_mech_jeb(
@@ -121,11 +121,39 @@ class BaseRocket(AutoPilotSystem, metaclass=abc.ABCMeta):
             'Method "stages" not implemented, if not need to return []'
         )
 
-    def next_stage(self):
+    def _next_stage(self):
         """
         the stage count is descending 5, 4, 3, 2
         """
         self.set_stages(stage=self.vessel.control.current_stage - 1)
+
+    def active_stage(self):
+        """
+        Active the next stage controlling if the vessel is activated or note
+        """
+        if self.space_center.active_vessel == self.vessel:
+            self.vessel.control.activate_next_stage()
+        else:
+            _current_stage = self.vessel.control.current_stage
+            if _current_stage > 0:
+                parts_in_stage = self.vessel.parts.in_stage(_current_stage - 1)
+                # tur on the engines
+                for part in parts_in_stage:
+                    if part.engine:
+                        part.engine.active = True
+
+                # deploy parachutes
+                for part in parts_in_stage:
+                    if part.parachute:
+                        part.parachute.deploy = True
+
+                # deploy decoupler
+                for part in parts_in_stage:
+                    if part.decoupler:
+                        part.decoupler.decouple()
+                
+                # FIXME: find a way to update the current_stage
+                # self.vessel.control.current_stage =self.vessel.control.current_stage -1
 
     def exec_toggle_action_group(self, action_group: int):
         self.vessel.control.toggle_action_group(action_group)
