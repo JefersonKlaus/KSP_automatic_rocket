@@ -1,13 +1,13 @@
 import abc
-import time
+import logging
 import math
+import time
 from enum import Enum
 
+from tools.orbit import Orbit
 from tools.telemetry import Telemetry
 
 from .suicide_burn import SuicideBurn
-import logging
-
 
 logging.basicConfig(level=logging.INFO)
 
@@ -37,17 +37,17 @@ class AutoPilotSystem:
     def __init__(self, conn, vessel):
         self.conn = conn
         self.space_center = self.conn.space_center
-        
+
         self.vessel = vessel
         self.auto_pilot = self.vessel.auto_pilot
         self.reference_frame = self.vessel.surface_reference_frame
-        
+
         self.mech_jeb = self.conn.mech_jeb
 
-        self.orbit = self.vessel.orbit
-        self.body = self.space_center.bodies[self.orbit.body.name]
+        self.body = self.space_center.bodies[self.vessel.orbit.body.name]
 
-        self.telemetry = Telemetry(self.conn, self.vessel)
+        self.orbit_tool = Orbit(self.conn, self.vessel)
+        self.telemetry_tool = Telemetry(self.conn, self.vessel)
 
         # TODO: update suicideBurn code
         self.suicide_burn = SuicideBurn(
@@ -55,8 +55,8 @@ class AutoPilotSystem:
         )
 
         # TODO: remove it
-        self.altitude = self.telemetry.get_latitude_stream()
-    
+        self.altitude = self.telemetry_tool.get_latitude_stream()
+
         self.__setup_abort_system()
 
     def set_sas_mode(self, sas=True, rcs=True):
@@ -75,78 +75,10 @@ class AutoPilotSystem:
         self.__set_sas_mode("radial", sas=sas, rcs=rcs)
 
     def create_circularization_node(self):
-        ut = self.conn.add_stream(getattr, self.conn.space_center, "ut")
-        mu = self.body.gravitational_parameter
-        r = self.orbit.apoapsis
-        a1 = self.orbit.semi_major_axis
-        a2 = r
-        v1 = math.sqrt(mu * ((2.0 / r) - (1.0 / a1)))
-        v2 = math.sqrt(mu * ((2.0 / r) - (1.0 / a2)))
-        delta_v = v2 - v1
-        return self.vessel.control.add_node(
-            ut() + self.orbit.time_to_apoapsis, prograde=delta_v
-        )
+        return self.orbit_tool.create_circularization_node()
 
     def exec_node(self, node, rcs=False):
-        self.auto_pilot.engage()
-        time.sleep(0.001)
-
-        self.vessel.control.rcs = rcs
-        time.sleep(0.001)
-
-        # set the position
-        self.auto_pilot.reference_frame = node.reference_frame
-        self.auto_pilot.target_direction = (0, 1, 0)
-        self.auto_pilot.wait()
-
-        # get burn time
-        F = self.vessel.available_thrust
-        Isp = self.vessel.specific_impulse * 9.82
-        m0 = self.vessel.mass
-        m1 = m0 / math.exp(node.remaining_delta_v / Isp)
-        flow_rate = F / Isp
-        burn_time = (m0 - m1) / flow_rate
-
-        # get current time and move until burn_time/2 less a security margin
-        remaining_time = node.time_to
-        current_ut = self.conn.space_center.ut
-        target_ut = current_ut + remaining_time - (burn_time / 2) - 10
-        self.conn.space_center.warp_to(target_ut)
-
-        # waite to get the target time
-        while self.conn.space_center.ut < target_ut:
-            time.sleep(0.1)
-
-        # turn on the engine
-        self.vessel.control.throttle = 1
-        while node.remaining_delta_v > 15:
-            time.sleep(0.1)
-
-        # reduce to 10% and wait to reduce to 0.5%
-        self.vessel.control.throttle = 0.1
-        las_remaining_delta_v = node.remaining_delta_v
-        while node.remaining_delta_v > 1:
-            time.sleep(0.1)
-            if node.remaining_delta_v > las_remaining_delta_v:
-                break
-            else:
-                las_remaining_delta_v = node.remaining_delta_v
-
-        # reduce to 0.5% and wait to turn off
-        self.vessel.control.throttle = 0.005
-        las_remaining_delta_v = node.remaining_delta_v
-        while node.remaining_delta_v > 0:
-            time.sleep(0.1)
-            if node.remaining_delta_v > las_remaining_delta_v:
-                break
-            else:
-                las_remaining_delta_v = node.remaining_delta_v
-
-        # turn off
-        self.vessel.control.throttle = 0
-        self.auto_pilot.disengage()
-        self.vessel.control.rcs = False
-        node.remove()
+        self.orbit_tool.execute_next_node_v2(node)
 
     def exec_lift_off_in_direction(
         self,
@@ -186,7 +118,7 @@ class AutoPilotSystem:
             self.auto_pilot.target_heading = 0
 
             # Altitude target
-            self.orbit.target_altitude = altitude
+            self.vessel.orbit.target_altitude = altitude
 
             # Start rocket
             logging.info("Engine: FULL")
@@ -194,9 +126,9 @@ class AutoPilotSystem:
                 self.vessel.control.throttle = throttle
             else:
                 self.vessel.control.throttle = self.get_engine_efficiency(
-                    altitude=self.telemetry.get_altitude(),
-                    speed=self.telemetry.get_velocity(),
-                    mass=self.telemetry.get_mass(),
+                    altitude=self.telemetry_tool.get_altitude(),
+                    speed=self.telemetry_tool.get_velocity(),
+                    mass=self.telemetry_tool.get_mass(),
                 )
 
             if func_nex_stage:
@@ -227,7 +159,7 @@ class AutoPilotSystem:
                             func_nex_stage()
 
                 # Verifica se o apoastro atingiu a altitude desejada
-                if self.orbit.apoapsis_altitude >= altitude:
+                if self.vessel.orbit.apoapsis_altitude >= altitude:
                     # Desliga o motor
                     logging.info("Engine: OFF")
                     self.vessel.control.throttle = 0.0
@@ -236,14 +168,14 @@ class AutoPilotSystem:
                 # Recalcula eficiencia do motor
                 # se força G baixar, acelera motor
                 _throttle = self.get_engine_efficiency(
-                    altitude=self.telemetry.get_altitude(),
-                    speed=self.telemetry.get_velocity(),
-                    mass=self.telemetry.get_mass(),
+                    altitude=self.telemetry_tool.get_altitude(),
+                    speed=self.telemetry_tool.get_velocity(),
+                    mass=self.telemetry_tool.get_mass(),
                 )
                 # garante que esteja acelerando no minimo a 2g
-                if self.telemetry.get_g_force() < 1:
+                if self.telemetry_tool.get_g_force() < 1:
                     self.vessel.control.throttle = self.vessel.control.throttle + 0.01
-                elif self.telemetry.get_g_force() < 2:
+                elif self.telemetry_tool.get_g_force() < 2:
                     self.vessel.control.throttle = self.vessel.control.throttle + 0.001
                 else:
                     if (self.vessel.control.throttle - 0.001) > _throttle:
@@ -254,7 +186,7 @@ class AutoPilotSystem:
                         self.vessel.control.throttle = _throttle
 
                 # recalcula novo angulo
-                _altitude = self.telemetry.get_altitude()
+                _altitude = self.telemetry_tool.get_altitude()
                 _turn_start_altitude = self.body.atmosphere_depth / 4
                 if _altitude > _turn_start_altitude:
                     frac = (_altitude - _turn_start_altitude) / (
@@ -270,16 +202,21 @@ class AutoPilotSystem:
         self.auto_pilot.disengage()
 
     def current_stage_has_fuel(self) -> bool:
-        stage_resource = self.vessel.resources_in_decouple_stage(
-            stage=self.vessel.control.current_stage - 1, cumulative=False
+        """
+        Check if the current stage has fuel
+
+        returns:
+            bool: True: has fuel | False does not has
+        """
+        resources_in_stage = self.vessel.resources_in_decouple_stage(
+            self.vessel.control.current_stage - 1, True
         )
-        liquid_fuel = self.conn.add_stream(stage_resource.amount, "LiquidFuel")
-        solid_fuel = self.conn.add_stream(stage_resource.amount, "SolidFuel")
-        return (
-            liquid_fuel() > 0.1
-            or solid_fuel()
-            > 1  # FIXME: validar a questao do solid, pois motores de separacao tem combustivel
+        fuel_list = filter(
+            lambda item: item.name in ["LiquidFuel", "SolidFuel"],
+            resources_in_stage.all,
         )
+        fuel_in_stage = sum(item.amount for item in fuel_list)
+        return fuel_in_stage > 0.05
 
     def exec_auto_landing_using_mech_jeb(
         self, touchdown_speed=3, latitude=None, longitude=None
@@ -415,8 +352,8 @@ class AutoPilotSystem:
 
         # limitar a 3G de impucho
         # _current_throttle = self.vessel.control.throttle
-        # print(f'eficiencia {str(efficiency)} G {str(self.telemetry.get_g_force())} Atual {str(_current_throttle)}')
-        # if self.telemetry.get_g_force() > 3:
+        # print(f'eficiencia {str(efficiency)} G {str(self.telemetry_tool.get_g_force())} Atual {str(_current_throttle)}')
+        # if self.telemetry_tool.get_g_force() > 3:
         #     return _current_throttle - 0.01
         # else:
         #     _new_throttle = _current_throttle + 0.01

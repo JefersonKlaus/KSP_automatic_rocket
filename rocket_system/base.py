@@ -151,7 +151,7 @@ class BaseRocket(AutoPilotSystem, metaclass=abc.ABCMeta):
                 for part in parts_in_stage:
                     if part.decoupler:
                         part.decoupler.decouple()
-                
+
                 # FIXME: find a way to update the current_stage
                 # self.vessel.control.current_stage =self.vessel.control.current_stage -1
 
